@@ -18,6 +18,7 @@
 #define SKIP_HOLE_FILLING "skip_hole_filling"
 #define KEEP_UNSEEN_FACES "keep_unseen_faces"
 #define NUM_THREADS "num_threads"
+#define SINGLE_TEXTURE_ATLAS "single_texture_atlas"
 
 Arguments parse_args(int argc, char **argv) {
     util::Arguments args;
@@ -73,6 +74,8 @@ Arguments parse_args(int argc, char **argv) {
         choice_string<tex::ToneMapping>(tex::TONE_MAPPING_NONE) + "]");
     args.add_option('v',"view_selection_model", false,
         "Write out view selection model [false]");
+    args.add_option('\0',SINGLE_TEXTURE_ATLAS, false,
+        "Force the creation of a single texture atlas file [false]");
     args.add_option('\0', SKIP_GEOMETRIC_VISIBILITY_TEST, false,
         "Skip geometric visibility test based on ray intersection [false]");
     args.add_option('\0', SKIP_GLOBAL_SEAM_LEVELING, false,
@@ -142,12 +145,14 @@ Arguments parse_args(int argc, char **argv) {
                 conf.settings.hole_filling = false;
             } else if (i->opt->lopt == KEEP_UNSEEN_FACES) {
                 conf.settings.keep_unseen_faces = true;
+            } else if (i->opt->lopt == SINGLE_TEXTURE_ATLAS) {
+                conf.settings.single_texture_atlas = true;
             } else if (i->opt->lopt == WRITE_TIMINGS) {
                 conf.write_timings = true;
             } else if (i->opt->lopt == NO_INTERMEDIATE_RESULTS) {
                 conf.write_intermediate_results = false;
             } else if (i->opt->lopt == NUM_THREADS) {
-                conf.num_threads = std::stoi(i->arg);
+                conf.num_threads = std::stoi(i->arg);                
             } else {
                 throw std::invalid_argument("Invalid long option");
             }
@@ -178,7 +183,8 @@ Arguments::to_string(){
         << "Outlier removal method: \t" << choice_string<tex::OutlierRemoval>(settings.outlier_removal) << std::endl
         << "Tone mapping: \t" << choice_string<tex::ToneMapping>(settings.tone_mapping) << std::endl
         << "Apply global seam leveling: \t" << bool_to_string(settings.global_seam_leveling) << std::endl
-        << "Apply local seam leveling: \t" << bool_to_string(settings.local_seam_leveling) << std::endl;
+        << "Apply local seam leveling: \t" << bool_to_string(settings.local_seam_leveling) << std::endl
+        << "Create a single texture atlas: \t" << bool_to_string(settings.single_texture_atlas) << std::endl;
 
     return out.str();
 }

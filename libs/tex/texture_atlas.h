@@ -22,6 +22,8 @@
 #include "texture_patch.h"
 #include "rectangular_bin.h"
 
+#define MAX_PADDING 32U
+
 /**
   * Class representing a texture atlas.
   */

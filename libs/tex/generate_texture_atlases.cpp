@@ -21,6 +21,7 @@
 #include "texture_patch.h"
 #include "texture_atlas.h"
 
+#define MAX_SINGLE_TEXTURE_SIZE (32 * 1024)
 #define MAX_TEXTURE_SIZE (8 * 1024)
 #define PREF_TEXTURE_SIZE (4 * 1024)
 #define MIN_TEXTURE_SIZE (256)
@@ -40,7 +41,7 @@ calculate_texture_size(std::list<TexturePatch::ConstPtr> const & texture_patches
         unsigned int total_area = 0;
         unsigned int max_width = 0;
         unsigned int max_height = 0;
-        unsigned int padding = size >> 7;
+        unsigned int padding = std::min(size >> 7, MAX_PADDING);
 
         for (TexturePatch::ConstPtr texture_patch : texture_patches) {
             unsigned int width = texture_patch->get_width() + 2 * padding;
@@ -116,52 +117,99 @@ generate_texture_atlases(std::vector<TexturePatch::Ptr> * orig_texture_patches,
     std::size_t remaining_patches = texture_patches.size();
     std::ofstream tty("/dev/tty", std::ios_base::out);
 
-    #pragma omp parallel
-    {
-    #pragma omp single
-    {
-
-    while (!texture_patches.empty()) {
+    if (settings.single_texture_atlas) {
+        // Using the same code as in  andre-schulz/mvs-texturing (single-texture-atlas branch)
         unsigned int texture_size = calculate_texture_size(texture_patches);
+        TextureAtlas::Ptr texture_atlas = TextureAtlas::create(texture_size);
+        while (remaining_patches > 0) {
+            /* Try to insert each of the texture patches into the texture atlas. */
+            std::list<TexturePatch::ConstPtr>::iterator it = texture_patches.begin();
+            for (; it != texture_patches.end();) {
+                std::size_t done_patches = total_num_patches - remaining_patches;
+                int precent = static_cast<float>(done_patches)
+                    / total_num_patches * 100.0f;
+                if (total_num_patches > 100
+                    && done_patches % (total_num_patches / 100) == 0) {
 
-        texture_atlases->push_back(TextureAtlas::create(texture_size));
-        TextureAtlas::Ptr texture_atlas = texture_atlases->back();
+                    tty << "\r\tWorking on the single-image atlas " << precent << "%... " << std::flush;
+                }
 
-        /* Try to insert each of the texture patches into the texture atlas. */
-        std::list<TexturePatch::ConstPtr>::iterator it = texture_patches.begin();
-        for (; it != texture_patches.end();) {
-            std::size_t done_patches = total_num_patches - remaining_patches;
-            int precent = static_cast<float>(done_patches)
-                / total_num_patches * 100.0f;
-            if (total_num_patches > 100
-                && done_patches % (total_num_patches / 100) == 0) {
+                if (texture_atlas->insert(*it)) {
+                    ++it;
+                    remaining_patches -= 1;
+                } else {
+                    /* Texture atlas was too small, try again. */
+                    texture_size *= 2;
+                    if (texture_size > MAX_SINGLE_TEXTURE_SIZE) {
+                        std::cerr << "\n[ERROR] Exceeded maximum texture size for a single-image atlas (" << MAX_SINGLE_TEXTURE_SIZE << ")." << std::endl
+                                  << "(if you really need a single-image atlas, please consider lowering the resolution of the input images)" << std::endl;
+                        std::exit(EXIT_FAILURE);
+                    }
 
-                tty << "\r\tWorking on atlas " << texture_atlases->size() << " "
-                 << precent << "%... " << std::flush;
-            }
-
-            if (texture_atlas->insert(*it)) {
-                it = texture_patches.erase(it);
-                remaining_patches -= 1;
-            } else {
-                ++it;
+                    remaining_patches = texture_patches.size();
+                    it = texture_patches.begin();
+                    try {
+                        texture_atlas = TextureAtlas::create(texture_size);
+                    } catch (std::bad_alloc const&) {
+                        std::cerr << "\n[ERROR] Your system cannot hold a single-image atlas that big (" << texture_size << ")." << std::endl
+                                  << "(if you really need a single-image atlas, please consider lowering the resolution of the input images)" << std::endl;
+                        std::exit(EXIT_FAILURE);
+                    }
+                    break;
+                }
             }
         }
-
-        #pragma omp task
-        texture_atlas->finalize();
+        texture_atlases->push_back(texture_atlas);
+	    texture_atlas->finalize();
     }
+    else {
+        #pragma omp parallel
+        {
+        #pragma omp single
+        {
 
-    std::cout << "\r\tWorking on atlas " << texture_atlases->size()
-        << " 100%... done." << std::endl;
-    util::WallTimer timer;
-    std::cout << "\tFinalizing texture atlases... " << std::flush;
-    #pragma omp taskwait
-    std::cout << "done. (Took: " << timer.get_elapsed_sec() << "s)" << std::endl;
+        while (!texture_patches.empty()) {
+            unsigned int texture_size = calculate_texture_size(texture_patches);
 
-    /* End of single region */
-    }
-    /* End of parallel region. */
+            texture_atlases->push_back(TextureAtlas::create(texture_size));
+            TextureAtlas::Ptr texture_atlas = texture_atlases->back();
+
+            /* Try to insert each of the texture patches into the texture atlas. */
+            std::list<TexturePatch::ConstPtr>::iterator it = texture_patches.begin();
+            for (; it != texture_patches.end();) {
+                std::size_t done_patches = total_num_patches - remaining_patches;
+                int precent = static_cast<float>(done_patches)
+                    / total_num_patches * 100.0f;
+                if (total_num_patches > 100
+                    && done_patches % (total_num_patches / 100) == 0) {
+
+                    tty << "\r\tWorking on atlas " << texture_atlases->size() << " "
+                    << precent << "%... " << std::flush;
+                }
+
+                if (texture_atlas->insert(*it)) {
+                    it = texture_patches.erase(it);
+                    remaining_patches -= 1;
+                } else {
+                    ++it;
+                }
+            }
+
+            #pragma omp task
+            texture_atlas->finalize();
+        }
+
+        std::cout << "\r\tWorking on atlas " << texture_atlases->size()
+            << " 100%... done." << std::endl;
+        util::WallTimer timer;
+        std::cout << "\tFinalizing texture atlases... " << std::flush;
+        #pragma omp taskwait
+        std::cout << "done. (Took: " << timer.get_elapsed_sec() << "s)" << std::endl;
+
+        /* End of single region */
+        }
+        /* End of parallel region. */
+        }
     }
 }
 
